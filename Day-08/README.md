@@ -68,7 +68,7 @@ When asking for generic recommendations like *"movies similar to Interstellar"*,
 * If 100,000 users search the catalog, passing the static catalog repeatedly forces the LLM to re-read unchanged text every time.
 * This wastes massive compute cycles re-encoding the same static catalog over and over again.
 
-### Problem 3 - We Do Not Need Generation (Think Like an Engineer)
+### Problem 3 - We Do Not Need Generation 
 * The recommendation goal is simply: *"Which movie is closest in meaning to this query?"*
 * We do not need the model to write conversational explanations like:
   > *"The Martian would be an excellent choice because it features survival on Mars..."*
@@ -84,8 +84,8 @@ When asking for generic recommendations like *"movies similar to Interstellar"*,
 * **Local Math Execution:** Comparing the query vector against 7,000 movie vectors happens locally via mathematical formulas (like Cosine Similarity) without making any additional external API calls.
 
 ### First Principles Solution: Precomputation
-* **Stable Data (Movie Catalog):** Descriptions rarely change. Calculate vectors once and store them.
-* **Dynamic Data (User Queries):** Convert the active query into a vector on demand.
+* **Stable Data (Movie Catalog):** Description of movies rarely change. Calculate vectors once and store them.
+* **Dynamic Data (User Queries):** Convert the active user search query into a vector on demand.
 * **Comparison:** Perform fast mathematical vector comparisons without LLM calls.
 
 ```text
@@ -93,8 +93,6 @@ When asking for generic recommendations like *"movies similar to Interstellar"*,
                                                                             │
 [User Search Query] ──► [Embedding Model] ──► [Query Vector] ───────────────┴──► [Cosine Similarity] ──► Ranked Results
 ```
-
-*(Note: Combining Embedding Search to fetch documents with an LLM to generate the final response forms the basis of Retrieval-Augmented Generation / RAG).*
 
 ---
 
