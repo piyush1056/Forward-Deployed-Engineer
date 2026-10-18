@@ -57,7 +57,7 @@ Even though modern models offer massive context windows (up to millions of token
 
 ### Search vs. Generation (Connecting Previous Learnings)
 
-- **Movie Recommender (Day 09/10):** We converted movies and queries into embeddings, ran vector similarity (Cosine / ANN), and returned top matches. We did not need an LLM because no text generation was required.
+- **Movie Recommender:** Earlier I converted movies and queries into embeddings, ran vector similarity (Cosine / ANN), and returned top matches. I did not need an LLM because no text generation was required.
 - **E-Commerce AI Assistant:** We still need vector similarity to search relevant knowledge, but we pair it with an LLM to generate natural, conversational responses grounded in that retrieved knowledge.
 
 ```text
@@ -67,7 +67,7 @@ Vector Search (Day 09/10)  +  Generative LLM  =  RAG (Retrieval-Augmented Genera
 
 ### Breaking Down the Acronym
 
-- **Retrieval:** Fetch only the top-$K$ most relevant document chunks from the vector database based on semantic similarity to the user's query.
+- **Retrieval:** Fetch only the top-K most relevant document chunks from the vector database based on semantic similarity to the user's query.
 - **Augmented:** Inject those retrieved chunks into the prompt alongside the user query and system prompt.
 - **Generation:** The LLM reads the fresh, grounded context and generates a factually accurate, hallucination-free response.
 
