@@ -110,3 +110,210 @@ AI quality cannot be represented by a single binary check (`good: true`). It is 
 | **Faithfulness / Groundedness** | Are claims derived only from the supplied context (critical for RAG)? | Context says: "Returns allowed in 30 days."<br>AI says: "Returns in 30 days, and refunds process in 24 hours."<br>$\rightarrow$ Even if true in real life, the 24-hour claim was not in the context, so it is unfaithful. |
 | **Helpfulness** | Is the tone, depth, and actionable guidance sufficient for the user? | User: "Can I return damaged shoes?"<br>AI: "Yes."<br>$\rightarrow$ Faithful and correct, but barely helpful. A helpful answer explains the return window and required receipt. |
 | **Hallucination** | Did the model generate fabricated or completely unjustified statements? | Context mentions a 30-day window. Model adds: "...subject to a 15% restocking fee." (Completely made up) |
+
+---
+
+## 6. Deep Dive: LLM-as-a-Judge & Rubrics
+
+### Why do we use LLM-as-a-Judge?
+
+Humans are slow and expensive; deterministic code cannot understand linguistic nuance or contextual meaning. LLM-as-a-Judge bridges this gap: You use a strong model to evaluate the output of your application model.
+
+```
+User Query + Retrieved Context + Generated Answer + Detailed Rubric
+                               |
+                               v
+                         [ Judge LLM ]
+                               |
+                               v
+               Structured Output: { score, reasoning }  
+```
+
+### What are Rubrics and why are they necessary?
+
+A rubric is an explicit grading guide. If you tell an LLM (or a human):
+> "Rate this response from 1 to 5, where 1 is bad and 5 is excellent"
+
+The evaluation becomes subjective. One run gives a 3, another gives a 5. What does "good" mean? Does a tiny typo make it a 4? Does missing context make it a 2?
+
+A rubric removes subjectivity by writing clear criteria for every single score.
+
+#### Bad Rubric vs. Good Rubric Example (Faithfulness)
+
+**Bad Rubric (Ambiguous):**
+- **5:** Excellent faithfulness
+- **3:** Average faithfulness
+- **1:** Terrible faithfulness
+
+**Good Rubric (Behavior-Based):**
+- **Score 5:** Every factual statement in the answer is directly and clearly supported by the context.
+- **Score 4:** The answer is supported by the context, with at most one minor detail that is not explicitly stated but does not alter the factual meaning.
+- **Score 3:** The core claim is supported, but the response includes at least one noticeable claim not mentioned in the context.
+- **Score 2:** Major parts of the response rely on outside assumptions or cannot be traced back to the context.
+- **Score 1:** The response directly contradicts the context or is entirely fabricated.
+
+### Designing the Judge Prompt
+
+Always demand structured output (JSON) and require the judge to provide the reasoning first before giving the score. This forces the LLM to process the justification before settling on a numeric token.
+
+```json
+{
+  "metric": "faithfulness",
+  "score": 4,
+  "reasoning": "The response accurately captures the 30-day return policy stated in chunk 1, but casually mentions 'original packaging' which was not explicitly defined in the retrieved text."
+}
+```
+
+### One Metric per Judge vs Multiple Metrics
+
+#### Approach 1 — Separate Evaluation
+Run different judge calls for: Relevance, Faithfulness, Helpfulness.
+- **Pros:** Focused prompt, easier debugging, clear judgement.
+- **Cons:** Higher cost and latency.
+
+#### Approach 2 — Evaluate Everything Together
+Ask one judge to evaluate multiple dimensions simultaneously:
+
+```json
+{
+  "response": "Retrieved Context: ...\nQuestion: ...\nModel Answer: ...",
+  "relevance": 5,
+  "correctness": 4,
+  "faithfulness": 5,
+  "helpfulness": 5
+}
+```
+- **Pros:** Lower cost and latency, simpler to manage.
+- **Cons:** Judge can get confused, harder debugging, more complex prompt.
+
+### Pointwise vs. Pairwise Evaluation
+
+- **Pointwise:** You evaluate each response independently using a rubric. (e.g., Model A gets 4/5, Model B gets 3/5).
+- **Pairwise:** You present the same question to two different models and ask the judge which output is better. (e.g., "Choose between A and B"). Pairwise evaluation is generally more reliable and easier for judges to do consistently, as humans are better at comparative judgments than absolute scoring. It is easier for models to judge reliably when A/B testing prompts, chunks, or models.
+
+### Limitations of LLM-as-a-Judge
+
+- **Knowledge Leakage:** The judge may use its own training knowledge to validate a claim instead of checking only the supplied context.
+- **Position Bias:** In pairwise evaluations, models often favor the first answer (Answer A) simply because of its position.
+- **Verbosity Bias:** Judges often assign higher scores to longer answers, even if they contain unnecessary fluff.
+- **Non-deterministic drift:** Temperature should be set to 0 for judge calls to minimize score variance.
+
+---
+
+## 7. RAG Evaluation: Two-Stage Testing
+
+To evaluate retrieval-augmented generation (RAG), you must first evaluate the retriever and then the generator.
+
+```
+User Query
+   |
+   v
+[ Vector Search ] =====> 1. RETRIEVAL EVAL: Did we get the right document chunks?
+   |
+Retrieved Chunks
+   |
+   v
+[ Generation LLM ] ====> 2. RESPONSE EVAL: Given these chunks, is the answer faithful & relevant?
+```
+
+- **Retrieval Eval:** Did the vector search pull `return-policy.pdf`? If the database retrieved the wrong chunks, evaluating the answer is pointless—the LLM never had the facts to begin with.
+- **Response Eval:** Assuming the retriever found the correct context, did the LLM stick to it (faithfulness) and answer the user clearly (relevance/helpfulness)?
+
+---
+
+## 8. Offline vs. Online Evaluation
+
+### Offline Evaluation
+Before deployment, you use a static, historical dataset of questions to test your system. You know the "ground truth" answer for each historical question.
+- **Pros:** Safe (no impact on real users), useful for comparing versions, cheap, easy to run automatically.
+- **Cons:** May not capture real-world drift, edge cases, or new slang/phrasing that users will actually use.
+
+Examples include testing after:
+- Changing prompts
+- Switching models
+- Changing chunk size
+- Changing retrieval count
+- Modifying system instructions
+- Changing embedding models
+- Modifying tool descriptions
+
+It is called offline because real users are not involved in the evaluation. We run stored test cases on an isolated system.
+
+### Online Evaluation (A/B Testing)
+In production, you route a fraction of traffic to the new version and measure key business metrics (e.g., "Did the user successfully resolve their issue?", "Did the user click the 'buy' button?") and comparison metrics (e.g., user ratings) between the old and new versions.
+
+#### Production Evaluation Considerations
+Online evaluation introduces additional concerns:
+- User privacy
+- Sensitive information
+- Evaluator cost
+- Storage
+- Latency
+- Compliance
+
+Therefore, production evaluation should be used only when necessary and carefully planned.
+
+---
+
+## 9. The Continuous Engineering Loop
+
+Production and development should feed into each other in a closed loop:
+
+```
+Offline Dataset
+      ↓
+    Test
+      ↓
+   Deploy
+      ↓
+ Real Users
+      ↓
+Identify Failures
+      ↓
+Add Failures to Eval Dataset
+      ↓
+Run Offline Evals Again
+```
+
+Whenever an edge-case query fails in production, clean it, sanitize any user private data, write its expected behavior, and add it directly to your test dataset. Your test suite gets stronger over time.
+
+### The Complete GenAI Evaluation Architecture
+
+```
+                   Evaluation Dataset
+                         │
+                         ▼
+                  AI Application
+                         │
+                         ▼
+                  Generated Output
+                         │
+            ┌────────────┴────────────┐
+            │                         │
+            ▼                         ▼
+   Deterministic Checks        Quality Evaluation
+            │                         │
+            │                 ┌───────┴───────┐
+            │                 │               │
+            ▼                 ▼               ▼
+       Pass / Fail       LLM Judge          Human
+                              │
+                              ▼
+                            Score
+```
+
+---
+
+## 10. A Practical Evaluation Workflow
+
+Whenever we modify an AI application:
+
+1. Keep a fixed evaluation dataset
+2. Run the new application version
+3. Evaluate deterministic behaviour with code
+4. Evaluate semantic quality with an LLM judge or humans where required
+5. Aggregate the results
+6. Compare them against the previous version
+7. Deploy only when quality remains acceptable
+8. Monitor real production interactions
+9. Add important failures back into the eval dataset
