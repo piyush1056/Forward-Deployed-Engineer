@@ -1,0 +1,14 @@
+{
+  "name": "vision-chat-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0",
+    "multer": "^2.5.0",
+    "openai": "^7.47.0"
+  }
+}
