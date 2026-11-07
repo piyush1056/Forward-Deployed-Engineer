@@ -390,3 +390,52 @@ export async function callModelWithOutputGuardrail(messages, tools) {
 - The LLM can propose an action; it must never authorize an action.
 - Never rely on the model to infer resource ownership.
 - Always run deterministic code checks at the tool execution layer.
+
+Example :
+
+```text
+[User HTTP Request] ──> "Where is my order ORD-101?"
+           │
+           ▼
+[Express Auth Middleware] ──> Verifies JWT / Session -> Attaches req.user
+           │
+           ▼
+┌─────────────────────────────────────────────────────────┐
+│ 1. ROUTER LLM (Small, Fast, Cheap e.g. gpt-4o-mini)     │
+│    • Has ZERO tools attached                            │
+│    • Only answers: "What category is this user asking?" │
+│    • Output: { intent: "ORDER_TRACKING" }               │
+└────────────────────────────┬────────────────────────────┘
+                             │
+                             ▼
+[Express Backend Switch Statement]
+Backend says: "Category is ORDER_TRACKING. 
+I will give the Main LLM ONLY the 'getOrderStatus' tool definition."
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│ 2. MAIN LLM (Full Model e.g. gpt-4o)                    │
+│    • Receives the conversation + ONLY getOrderStatus    │
+│    • Reads the prompt: "Where is my order ORD-101?"     │
+│    • Extracts arguments and PROPOSES the tool call:     │
+│      Tool Proposal: getOrderStatus(orderId: "ORD-101")  │
+└────────────────────────────┬────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│ 3. BACKEND TOOL EXECUTOR (Deterministic Authorization)  │
+│    • Intercepts the proposal BEFORE execution           │
+│    • DB Check: Does req.user.id own ORD-101?            │
+│    • YES ──> Fetch tracking info from DB                │
+│    • NO  ──> Throw error: "Access Denied"               │
+└────────────────────────────┬────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│ 4. MAIN LLM (Final Answer Formulation)                  │
+│    • Receives DB result: "Out for delivery by 5 PM"     │
+│    • Generates human-friendly reply to user:            │
+│      "Your order ORD-101 is out for delivery today!"    │
+└─────────────────────────────────────────────────────────┘
+
+```
