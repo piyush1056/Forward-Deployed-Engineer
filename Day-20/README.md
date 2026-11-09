@@ -1,0 +1,3 @@
+Day 20 : Mastering AI Agent Reliability with Agent Harnessing 
+
+To build a truly reliable AI agent that can handle complex, multi-step tasks like generating automated release notes, a simple connection between an LLM and tools is not enough. Relying only on an LLM can lead to issues like hallucinations, missing data, or failure to complete tasks. To solve this, we introduce the Agent Harness-a structural framework that manages the agent loop, enforces validation, maintains state, and handles retries. By using an Agent Harness, we shift from a simple request-response model to a robust system capable of planning, acting, observing, and deciding until a task is successfully completed.
