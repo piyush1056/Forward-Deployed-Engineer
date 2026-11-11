@@ -16,7 +16,7 @@ export async function getEmbedding(text) {
 export async function getBatchEmbeddings(texts) {
   const response = await openai.embeddings.create({
     model: env.embeddingModel,
-    input: texts
+    input: texts   //array of strings  [movie1:des ,movie2:des...]
   });
 
   return response.data.map((item) => item.embedding);
