@@ -153,3 +153,103 @@ PHASE 2: BUILD PROMPT & RUN (Happens Every Attempt)
                               │
 [System Instructions] ────────┘
 ```
+
+---
+
+## IV. Checkpointing & Fault Tolerance
+
+### First Principle
+AI agent workflows take 30 to 90 seconds and depend on external networks (Jira API, OpenAI API, database). Servers crash, cloud containers restart, and APIs randomly drop connections. If a job crashes at Step 4, restarting from Step 1 wastes money and time.
+
+### Checkpointing
+Checkpointing means saving the updated Task State object to your database immediately after every single step completes.
+
+### Fault Tolerance (Recovering From a Crash)
+Fault Tolerance is designing your backend so that if the server crashes and restarts, it reads the last saved checkpoint from the database and continues from that exact step.
+
+#### Concrete Crash & Recovery Timeline:
+- **10:00:01** — Express fetches 60 tickets from Jira and compacts them. Saves Checkpoint 1 (`status: "TICKETS_READY"`).
+- **10:00:08** — LLM generates Draft 1. Saves Checkpoint 2 (`status: "DRAFT_GENERATED", currentDraft: "..."`).
+- **10:00:10** — **Server Crash!** Your Node.js process runs out of memory and restarts.
+- **10:00:15** — Your worker restarts and checks `taskState` for `"release-v2.4.0"`. It sees `status === "DRAFT_GENERATED"`. Instead of calling Jira again or regenerating Draft 1, it skips straight to running the Evaluator on the saved `currentDraft`.
+
+---
+
+## V. Execution Control & Timeouts
+
+### First Principle
+If an LLM gets confused inside an Agent Loop, it can fail validation 100 times in a row, burning $50 of API credits in two minutes and hanging your Express server. You need smart retries so it actually fixes errors, and hard limits so it stops when stuck.
+
+### 1. Two Types of Retries
+When the Evaluator rejects a draft, the Harness chooses between two retry strategies:
+
+- **Instruction Retry (Format Failure):**
+  - **What happened:** The LLM returned conversational text instead of valid JSON.
+  - **How Harness retries:** Keep the exact same input data, but append a strict formatting rule to the instruction: *"Your last output was not valid JSON. Output ONLY a raw JSON object with no markdown backticks."*
+
+- **Model Context Retry (Content/Logic Failure):**
+  - **What happened:** The format was valid, but the content missed a ticket (`PAY-108`) or included an internal task (`DB-309`).
+  - **How Harness retries:** Add the previous draft and the Evaluator's exact feedback into the Model Context: *"In your previous draft, you forgot bug ticket PAY-108. Keep everything else, but add PAY-108 under Bug Fixes."*
+
+### 2. Three Layers of Timeouts (Using Node.js AbortController)
+Every network call and loop needs a strict timer:
+
+- **Tool Timeout (e.g., 5 seconds):** If `fetch()` to Jira takes longer than 5 seconds, abort the request so Express does not hang.
+- **LLM Timeout (e.g., 20 seconds):** If the LLM provider freezes, cancel the HTTP request and trigger a retry.
+- **Overall Task Timeout (e.g., 2 minutes) + Max Attempts (`maxAttempts = 3`):** Even if individual calls succeed, if the agent fails validation 3 times in a row or crosses 2 minutes total, the Harness stops the loop, marks `status: "FAILED"`, and alerts an engineer.
+
+```text
+[Start Loop: attempt = 1]
+         |
+         v
+[Call LLM (20s Timeout)] ---(Timeout)---> [Retry if attempt < 3] ---> [Stop & Mark FAILED]
+         |
+     (Success)
+         v
+[Evaluator Check] ---(Format Error)---> [Instruction Retry (Fix JSON/Format)]
+         |
+   (Logic Error)
+         v
+[Model Context Retry (Pass Error Feedback to LLM)]
+```
+
+---
+
+## VI. Human-in-the-Loop (HITL) & Express.js Architecture
+
+### First Principle
+Automated evaluators catch structural and factual mistakes, but AI lacks real-world business judgment. For high-risk actions that affect real customers, the Harness must pause and wait for human approval before executing the final step.
+
+### Why HITL is Critical Here
+Suppose a developer closed ticket `SEC-404`: "Fix SQL injection vulnerability on login endpoint".
+
+Both your Deterministic Evaluator and LLM-as-a-Judge see a valid bug fix, so they mark it `PASS`.
+
+However, if you publish "Fixed SQL injection on login" to public release notes, hackers immediately know your older app versions can be hacked!
+
+### How the Approval Workflow Works
+1. Once the draft passes the Evaluator, the Harness does not publish it.
+2. Instead, the Harness updates `taskState.status = "AWAITING_APPROVAL"`, saves a checkpoint in the database, and stops execution.
+3. A Product Manager opens a simple internal dashboard, reviews the draft, deletes `SEC-404`, and clicks Approve.
+4. Clicking Approve calls `POST /api/releases/v2.4.0/approve` on your Express server, which loads the checkpoint and runs `publishReleaseNotes()`.
+
+#### Architecture Flow
+
+```text
+POST /api/releases/start
+         |
+         v
+[agentHarness.js] ---> [jiraToolService.js] (Fetch raw Jira tickets)
+         |
+         +-----------> [contextBuilder.js] (Compact 80 fields -> 4 fields)
+         |
+         +-----------> [LLM API Call] (Generate Release Notes Draft)
+         |
+         +-----------> [evaluatorService.js] (Check ticket IDs + LLM Judge)
+         |
+         +-----------> [taskStore.js] (Save Checkpoint: status = AWAITING_APPROVAL)
+                              |
+                 (Product Manager reviews & edits)
+                              |
+POST /api/releases/:id/approve ---> [jiraToolService.js] (Publish final notes)
+```
